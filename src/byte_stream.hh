@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 class Reader;
 class Writer;
@@ -12,19 +14,21 @@ class ByteStream
 public:
   explicit ByteStream( uint64_t capacity );
 
-  // Helper functions (provided) to access the ByteStream's Reader and Writer interfaces
   Reader& reader();
   const Reader& reader() const;
   Writer& writer();
   const Writer& writer() const;
 
-  void set_error() { error_ = true; };       // Signal that the stream suffered an error.
-  bool has_error() const { return error_; }; // Has the stream had an error?
+  void set_error() { error_ = true; }
+  bool has_error() const { return error_; }
 
 protected:
-  // Please add any additional state to the ByteStream here, and not to the Writer and Reader interfaces.
   uint64_t capacity_;
   bool error_ {};
+  bool closed_ {};
+  uint64_t bytes_pushed_ {};
+  uint64_t bytes_popped_ {};
+  std::string buffer_ {};
 };
 
 class Writer : public ByteStream

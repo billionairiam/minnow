@@ -1,16 +1,36 @@
 #include "socket.hh"
+#include "address.hh"
 
 #include <cstdlib>
 #include <iostream>
 #include <span>
 #include <string>
+#include <sstream>
 
 using namespace std;
 
 void get_URL( const string& host, const string& path )
 {
-  cerr << "Function called: get_URL(" << host << ", " << path << ")\n";
-  cerr << "Warning: get_URL() has not been implemented yet.\n";
+  string buff;
+  const string port = "80";
+  Address addr {host, port};
+  TCPSocket sock;
+
+  sock.connect(addr);
+
+  std::ostringstream request;
+  request << "GET " << path << " HTTP/1.1\r\n";
+  request << "Host: " << host << "\r\n";
+  request << "Connection: close\r\n";
+  request << "\r\n";
+
+  sock.write(request.str());
+  string buf;
+  while (!sock.eof())
+  {
+    sock.read(buf);
+    cout << buf;
+  }
 }
 
 int main( int argc, char* argv[] )

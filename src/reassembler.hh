@@ -6,7 +6,7 @@ class Reassembler
 {
 public:
   // Construct Reassembler to write into given ByteStream.
-  explicit Reassembler( ByteStream&& output ) : output_( std::move( output ) ) {}
+  explicit Reassembler( ByteStream&& output ) : output_( std::move( output ) ), bytes_pending_ ( 0 ) , pending_assemble {}, last_index { -1 }{}
 
   /*
    * Insert a new substring to be reassembled into a ByteStream.
@@ -42,4 +42,7 @@ public:
 
 private:
   ByteStream output_; // the Reassembler writes to this ByteStream
+  uint64_t bytes_pending_;
+  std::vector<std::pair<uint64_t, std::string>> pending_assemble;
+  int last_index;
 };
