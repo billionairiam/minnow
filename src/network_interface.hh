@@ -91,4 +91,7 @@ private:
 
   // last tick time
   size_t ms_since_last_tick_;
+
+  // Pending InternetDatagram
+  std::map<uint32_t, InternetDatagram> pending_dgram_;
 };

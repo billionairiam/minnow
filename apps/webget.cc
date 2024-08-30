@@ -1,6 +1,6 @@
 #include "socket.hh"
 #include "address.hh"
-#include "tcp minnow socket.hh"
+#include "tcp_minnow_socket.hh"
 
 #include <cstdlib>
 #include <iostream>

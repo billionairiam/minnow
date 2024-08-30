@@ -19,7 +19,9 @@ NetworkInterface::NetworkInterface( string_view name,
   : name_( name )
   , port_( notnull( "OutputPort", move( port ) ) )
   , ethernet_address_( ethernet_address )
-  , ip_address_( ip_address ), arp_table_ {}, arp_requests_ {}, ms_since_last_tick_ {}
+  , ip_address_( ip_address ), arp_table_ {}
+  , arp_requests_ {}, ms_since_last_tick_ {}
+  , pending_dgram_ {}
 {
   cerr << "DEBUG: Network interface has Ethernet address " << to_string( ethernet_address ) << " and IP address "
        << ip_address.ip() << "\n";
@@ -35,12 +37,8 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
   auto ipv4_addr = next_hop.ipv4_numeric();
 
   auto arp_entry = arp_table_.find(ipv4_addr);
-  if (arp_entry != arp_table_.end()) {
-    if (arp_entry->second.first + ARP_ENTRY_TIMEOUT <= ms_since_last_tick_) {
-      arp_table_.erase(arp_entry);
-      return;
-    }
-    
+  if (arp_entry != arp_table_.end() and arp_entry->second.first + ARP_ENTRY_TIMEOUT > ms_since_last_tick_) {
+
     EthernetFrame frame;
 
     frame.header.type = EthernetHeader::TYPE_IPv4;
@@ -49,14 +47,14 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
 
     Serializer serializer;
     dgram.serialize(serializer);
-    serializer.buffer(frame.payload);
+    frame.payload = serializer.output();
 
     transmit(frame);
   } else {
     auto arp_request_time = arp_requests_.find(next_hop.ipv4_numeric());
 
     bool should_send_arp_request = (arp_request_time == arp_requests_.end()) ||
-                                       (arp_request_time->second + ARP_REQUEST_TIMEOUT > ms_since_last_tick_);
+                                       (arp_request_time->second + ARP_REQUEST_TIMEOUT <= ms_since_last_tick_);
     if (should_send_arp_request) {
       ARPMessage arp_request;
 
@@ -74,10 +72,12 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
 
       Serializer serializer;
       arp_request.serialize(serializer);
-      serializer.buffer(arp_frame.payload);
+      arp_frame.payload = serializer.output();
 
       arp_requests_[next_hop.ipv4_numeric()] = ms_since_last_tick_;
       transmit(arp_frame);
+
+      pending_dgram_[next_hop.ipv4_numeric()] = dgram;
     }
   }
 }
@@ -101,28 +101,42 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
 
     ARPMessage arp_msg;
     arp_msg.parse(parser);
-    if (!parser.has_error() and arp_msg.opcode == ARPMessage::OPCODE_REQUEST
-        and arp_msg.target_ip_address == ip_address_.ipv4_numeric()) {
-      arp_table_[ip_address_.ipv4_numeric()] = {ms_since_last_tick_, ethernet_address_};
-      
-      ARPMessage arp_reply;
-      arp_reply.opcode = ARPMessage::OPCODE_REPLY;
-      arp_reply.sender_ethernet_address = ethernet_address_; // Our Ethernet address
-      arp_reply.sender_ip_address = ip_address_.ipv4_numeric(); // Our IP address
-      arp_reply.target_ethernet_address = arp_msg.sender_ethernet_address; // Requester's Ethernet address
-      arp_reply.target_ip_address = arp_msg.sender_ip_address; // Requester's IP address
 
-      // Encapsulate ARP reply in an Ethernet frame
-      EthernetFrame reply_frame;
-      reply_frame.header.dst = arp_msg.sender_ethernet_address; // To requester's MAC address
-      reply_frame.header.src = ethernet_address_; // From our MAC address
-      reply_frame.header.type = EthernetHeader::TYPE_ARP; // ARP type
-      
-      Serializer serializer;
-      reply_frame.serialize(serializer);
-      serializer.buffer(reply_frame.payload);
+    arp_table_[arp_msg.sender_ip_address] = {ms_since_last_tick_, arp_msg.sender_ethernet_address};
+    if (!parser.has_error() and arp_msg.target_ip_address == ip_address_.ipv4_numeric()) {
+      if (arp_msg.opcode == ARPMessage::OPCODE_REQUEST) {
+        ARPMessage arp_reply;
+        arp_reply.opcode = ARPMessage::OPCODE_REPLY;
+        arp_reply.sender_ethernet_address = ethernet_address_; // Our Ethernet address
+        arp_reply.sender_ip_address = ip_address_.ipv4_numeric(); // Our IP address
+        arp_reply.target_ethernet_address = arp_msg.sender_ethernet_address; // Requester's Ethernet address
+        arp_reply.target_ip_address = arp_msg.sender_ip_address; // Requester's IP address
 
-      transmit(reply_frame);
+        // Encapsulate ARP reply in an Ethernet frame
+        EthernetFrame reply_frame;
+        reply_frame.header.dst = arp_msg.sender_ethernet_address; // To requester's MAC address
+        reply_frame.header.src = ethernet_address_; // From our MAC address
+        reply_frame.header.type = EthernetHeader::TYPE_ARP; // ARP type
+        
+        Serializer serializer;
+        arp_reply.serialize(serializer);
+        reply_frame.payload = serializer.output();
+
+        transmit(reply_frame);
+      }
+
+      if (arp_msg.opcode == ARPMessage::OPCODE_REPLY) {
+        EthernetFrame reply_frame;
+        reply_frame.header.dst = arp_msg.sender_ethernet_address; // To requester's MAC address
+        reply_frame.header.src = ethernet_address_; // From our MAC address
+        reply_frame.header.type = EthernetHeader::TYPE_IPv4;
+
+        Serializer serializer;
+        pending_dgram_[arp_msg.sender_ip_address].serialize(serializer);
+        reply_frame.payload = serializer.output();
+
+        transmit(reply_frame);
+      }
     }
   }
 }
@@ -131,5 +145,5 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
 void NetworkInterface::tick( const size_t ms_since_last_tick )
 {
   // Your code here.
-  ms_since_last_tick_ = ms_since_last_tick;
+  ms_since_last_tick_ += ms_since_last_tick;
 }
