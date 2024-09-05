@@ -21,7 +21,6 @@ NetworkInterface::NetworkInterface( string_view name,
   , ethernet_address_( ethernet_address )
   , ip_address_( ip_address ), arp_table_ {}
   , arp_requests_ {}, ms_since_last_tick_ {}
-  , pending_dgram_ {}
 {
   cerr << "DEBUG: Network interface has Ethernet address " << to_string( ethernet_address ) << " and IP address "
        << ip_address.ip() << "\n";
@@ -34,9 +33,7 @@ NetworkInterface::NetworkInterface( string_view name,
 void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Address& next_hop )
 {
   // Your code here.
-  auto ipv4_addr = next_hop.ipv4_numeric();
-
-  auto arp_entry = arp_table_.find(ipv4_addr);
+  auto arp_entry = arp_table_.find(next_hop.ipv4_numeric());
   if (arp_entry != arp_table_.end() and arp_entry->second.first + ARP_ENTRY_TIMEOUT > ms_since_last_tick_) {
 
     EthernetFrame frame;
@@ -51,6 +48,8 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
 
     transmit(frame);
   } else {
+    pending_dgram_[next_hop.ipv4_numeric()] = dgram;
+
     auto arp_request_time = arp_requests_.find(next_hop.ipv4_numeric());
 
     bool should_send_arp_request = (arp_request_time == arp_requests_.end()) ||
@@ -75,9 +74,8 @@ void NetworkInterface::send_datagram( const InternetDatagram& dgram, const Addre
       arp_frame.payload = serializer.output();
 
       arp_requests_[next_hop.ipv4_numeric()] = ms_since_last_tick_;
-      transmit(arp_frame);
 
-      pending_dgram_[next_hop.ipv4_numeric()] = dgram;
+      transmit(arp_frame);
     }
   }
 }
@@ -90,10 +88,11 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
       frame.header.dst == ethernet_address_) {
     Parser parser {frame.payload};
     
-    IPv4Datagram dgram;
+    InternetDatagram dgram;
     dgram.parse(parser);
-    if (!parser.has_error())
+    if (!parser.has_error()) {
       datagrams_received_.push(dgram);
+    }
   }
 
   if (frame.header.type == EthernetHeader::TYPE_ARP) {
@@ -114,7 +113,7 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
 
         // Encapsulate ARP reply in an Ethernet frame
         EthernetFrame reply_frame;
-        reply_frame.header.dst = arp_msg.sender_ethernet_address; // To requester's MAC address
+        reply_frame.header.dst = frame.header.src; // To requester's MAC address
         reply_frame.header.src = ethernet_address_; // From our MAC address
         reply_frame.header.type = EthernetHeader::TYPE_ARP; // ARP type
         
@@ -126,16 +125,12 @@ void NetworkInterface::recv_frame( const EthernetFrame& frame )
       }
 
       if (arp_msg.opcode == ARPMessage::OPCODE_REPLY) {
-        EthernetFrame reply_frame;
-        reply_frame.header.dst = arp_msg.sender_ethernet_address; // To requester's MAC address
-        reply_frame.header.src = ethernet_address_; // From our MAC address
-        reply_frame.header.type = EthernetHeader::TYPE_IPv4;
+        if (pending_dgram_.find(arp_msg.sender_ip_address) != pending_dgram_.end()) {
+          send_datagram(pending_dgram_[arp_msg.sender_ip_address],
+                        Address::from_ipv4_numeric(arp_msg.sender_ip_address));
 
-        Serializer serializer;
-        pending_dgram_[arp_msg.sender_ip_address].serialize(serializer);
-        reply_frame.payload = serializer.output();
-
-        transmit(reply_frame);
+          pending_dgram_.erase(pending_dgram_.find(arp_msg.sender_ip_address));
+        }
       }
     }
   }

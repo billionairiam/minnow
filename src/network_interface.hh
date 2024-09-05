@@ -84,7 +84,7 @@ private:
   std::queue<InternetDatagram> datagrams_received_ {};
   
   //Address Resolution Protocol map
-  std::map<uint32_t, std::pair<size_t, EthernetAddress>> arp_table_;
+  std::map<uint32_t, std::pair<size_t, EthernetAddress>> arp_table_ {};
 
   //ARP requests
   std::map<uint32_t, size_t> arp_requests_;
@@ -93,5 +93,5 @@ private:
   size_t ms_since_last_tick_;
 
   // Pending InternetDatagram
-  std::map<uint32_t, InternetDatagram> pending_dgram_;
+  std::map<uint32_t, InternetDatagram> pending_dgram_ {};
 };
