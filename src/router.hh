@@ -6,14 +6,6 @@
 #include "exception.hh"
 #include "network_interface.hh"
 
-// RouteEntry represents a single route entry in the routing table.
-struct RouteEntry {
-    uint32_t route_prefix;              // Network prefix (in host byte order).
-    uint8_t prefix_length;              // Prefix length (0-32).
-    std::optional<Address> next_hop;    // Optional next-hop address.
-    size_t interface_num;               // Interface number.
-};
-
 // \brief A router that has multiple network interfaces and
 // performs longest-prefix-match routing between them.
 class Router
@@ -43,12 +35,19 @@ public:
 private:
   // The router's collection of network interfaces
   std::vector<std::shared_ptr<NetworkInterface>> _interfaces {};
+  std::queue<InternetDatagram> datagram_buffer_ {};
 
-  // A simple vector to store routes. Could be a more complex structure for efficiency.
-  std::vector<RouteEntry> _routes {};
+  bool match( InternetDatagram& d );
 
-  bool match_route(const RouteEntry& route, uint32_t destination_ip) {
-      uint32_t mask = (route.prefix_length == 0) ? 0 : ~((1 << (32 - route.prefix_length)) - 1);
-      return (destination_ip & mask) == (route.route_prefix & mask);
-  }
+  struct TrieNode
+  {
+    TrieNode() : interface_num(std::nullopt),next_hop(std::nullopt),left(nullptr),right(nullptr) {};
+
+    std::optional<size_t> interface_num;
+    std::optional<Address> next_hop;
+    std::unique_ptr<TrieNode> left;
+    std::unique_ptr<TrieNode> right;
+  };
+
+  std::unique_ptr<TrieNode> root_ {nullptr};
 };
